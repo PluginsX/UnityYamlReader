@@ -17,22 +17,15 @@ const upload = multer({
     storage: storage,
     limits: {
         fileSize: 50 * 1024 * 1024, // 50MB限制
-    },
-    fileFilter: (req, file, cb) => {
-        // 只允许.prefab文件
-        if (file.originalname.endsWith('.prefab')) {
-            cb(null, true);
-        } else {
-            cb(new Error('只支持.prefab文件'), false);
-        }
     }
+    // 移除文件格式过滤，允许上传任何Unity资产文件
 });
 
 // 处理Unity YAML文件的解析（使用 unity-yaml-parser 库）
 function parseUnityYaml(content) {
     // unity-yaml-parser 的 parse 函数需要文件路径，而不是字符串内容
     // 所以我们需要先将内容写入临时文件
-    const tempFilePath = path.join(os.tmpdir(), `prefab_${Date.now()}_${Math.random().toString(36).substring(7)}.prefab`);
+    const tempFilePath = path.join(os.tmpdir(), `unity_asset_${Date.now()}_${Math.random().toString(36).substring(7)}.asset`);
     
     try {
         // 将内容写入临时文件

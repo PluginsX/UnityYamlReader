@@ -12,6 +12,18 @@ const searchFilteredFields = new Set(); // 存储搜索筛选后的字段
 // 自动选择子字段的开关状态
 let autoSelectChildren = false; // 默认禁用自动选择子字段
 
+// 存储字段信息的索引结构，提高搜索性能
+let fieldInfoIndex = new Map(); // Map<path, {name, value, element}>
+
+// 存储路径到父路径的映射，用于快速查找父节点
+let parentPathMap = new Map();
+
+// 存储路径到子路径的映射，用于快速查找子节点
+let childPathMap = new Map();
+
+// 防抖定时器
+let searchDebounceTimer = null;
+
 // DOM元素引用
 const fileUpload = document.getElementById('file-upload');
 const fileNameDisplay = document.getElementById('file-name');
@@ -25,13 +37,26 @@ const selectAllBtn = document.getElementById('select-all-btn');
 const deselectAllBtn = document.getElementById('deselect-all-btn');
 const invertSelectionBtn = document.getElementById('invert-selection-btn');
 
+// 防抖函数
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
 // 初始化应用
 function initApp() {
     // 设置文件上传事件处理
     fileUpload.addEventListener('change', handleFileUpload);
     
-    // 设置搜索框事件处理
-    searchInput.addEventListener('input', handleSearch);
+    // 设置搜索框事件处理 - 使用防抖优化
+    searchInput.addEventListener('input', debounce(handleSearch, 200));
     
     // 设置导出按钮事件处理
     exportBtn.addEventListener('click', handleExport);
@@ -118,11 +143,8 @@ function handleDrop(e) {
 
 // 统一处理文件的函数
 function handleFile(file) {
-    // 检查文件类型
-    if (!file.name.endsWith('.prefab')) {
-        alert('请选择.prefab文件！');
-        return;
-    }
+    // 不再检查文件类型，允许导入任何文件
+    // 只要文件内容符合unity-yaml-parser库的解析要求，就能正常工作
     
     // 更新文件名显示
     fileNameDisplay.textContent = file.name;
@@ -130,6 +152,10 @@ function handleFile(file) {
     // 显示加载状态
     fileNameDisplay.textContent += ' (解析中...)';
     treeContent.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">正在解析文件，请稍候...</div>';
+    
+    // 重置搜索框和搜索词
+    searchInput.value = '';
+    searchTerm = '';
     
     // 创建FormData对象
     const formData = new FormData();
@@ -154,15 +180,16 @@ function handleFile(file) {
             // 存储解析后的数据
             parsedData = data.data;
             
-            // 重置选择集合
+            // 重置所有相关集合和映射
             selectedFields.clear();
+            fieldInfoIndex.clear();
+            parentPathMap.clear();
+            childPathMap.clear();
+            
             updateSelectedCount();
             
             // 渲染树状结构
             renderTree(parsedData);
-            
-            // 应用搜索过滤器
-            applySearchFilter();
         } else {
             throw new Error(data.error || '解析失败');
         }
@@ -175,7 +202,7 @@ function handleFile(file) {
             <div style="text-align: center; padding: 20px; color: #ff4444;">
                 <h3>解析文件时出错</h3>
                 <p>${error.message}</p>
-                <p>请检查文件格式是否正确，或尝试使用其他版本的prefab文件。</p>
+                <p>请检查文件格式是否正确，或尝试使用其他Unity资产文件。</p>
             </div>
         `;
         // 禁用导出按钮
@@ -208,6 +235,9 @@ function renderTree(data) {
     treeContent.innerHTML = '';
     allFieldPaths.clear();
     checkboxMap.clear(); // 清空复选框映射
+    fieldInfoIndex.clear(); // 清空字段信息索引
+    parentPathMap.clear(); // 清空父路径映射
+    childPathMap.clear(); // 清空子路径映射
     
     if (!data || typeof data !== 'object') {
         treeContent.innerHTML = '<p class="placeholder-text">文件内容为空或无效</p>';
@@ -227,7 +257,9 @@ function renderTree(data) {
     
     treeContent.appendChild(rootContainer);
     
-    // 应用搜索筛选
+    // 确保搜索词为空并应用搜索筛选，显示所有字段
+    searchTerm = '';
+    searchInput.value = '';
     applySearchFilter();
 }
 
@@ -241,6 +273,17 @@ function renderNode(container, data, fieldName, parentPath = '') {
     // 收集所有字段路径（排除root）
     if (currentPath !== 'root') {
         allFieldPaths.add(currentPath);
+        
+        // 建立父路径映射
+        if (parentPath) {
+            parentPathMap.set(currentPath, parentPath);
+            
+            // 建立子路径映射
+            if (!childPathMap.has(parentPath)) {
+                childPathMap.set(parentPath, new Set());
+            }
+            childPathMap.get(parentPath).add(currentPath);
+        }
     }
     
     // 创建行元素
@@ -298,25 +341,39 @@ function renderNode(container, data, fieldName, parentPath = '') {
     fieldInfo.appendChild(fieldNameElement);
     
     // 添加值显示（如果不是对象或数组）
+    let fieldValueText = '';
     if (!isObject || (isArray && data.length === 0)) {
         const fieldValue = document.createElement('span');
         fieldValue.className = 'field-value';
-        fieldValue.textContent = formatValue(data);
+        fieldValueText = formatValue(data);
+        fieldValue.textContent = fieldValueText;
         fieldInfo.appendChild(fieldValue);
     } else if (isArray) {
         const fieldValue = document.createElement('span');
         fieldValue.className = 'field-value';
-        fieldValue.textContent = `Array[${data.length}]`;
+        fieldValueText = `Array[${data.length}]`;
+        fieldValue.textContent = fieldValueText;
         fieldInfo.appendChild(fieldValue);
     } else {
         const fieldValue = document.createElement('span');
         fieldValue.className = 'field-value';
-        fieldValue.textContent = `Object{${Object.keys(data).length}}`;
+        fieldValueText = `Object{${Object.keys(data).length}}`;
+        fieldValue.textContent = fieldValueText;
         fieldInfo.appendChild(fieldValue);
     }
     
     treeRow.appendChild(fieldInfo);
     container.appendChild(treeRow);
+    
+    // 将字段信息添加到索引中，用于快速搜索
+    if (currentPath !== 'root') {
+        fieldInfoIndex.set(currentPath, {
+            name: fieldName.toLowerCase(),
+            value: fieldValueText.toLowerCase(),
+            element: treeRow,
+            childrenContainer: childrenContainer
+        });
+    }
     
     // 添加子节点容器到DOM
     if (hasChildren) {
@@ -350,16 +407,19 @@ function toggleNode(childrenContainer) {
 // 获取字段的所有子字段路径 - 优化版本
 function getAllChildPaths(path) {
     const childPaths = [];
-    const prefix = path + '.';
     
-    // 使用Set优化查找逻辑
-    for (const currentPath of allFieldPaths) {
-        // 检查是否是当前路径的子路径
-        if (currentPath.startsWith(prefix)) {
-            childPaths.push(currentPath);
+    // 使用子路径映射进行优化，避免遍历所有路径
+    function collectAllChildren(currentPath) {
+        if (childPathMap.has(currentPath)) {
+            const directChildren = childPathMap.get(currentPath);
+            directChildren.forEach(childPath => {
+                childPaths.push(childPath);
+                collectAllChildren(childPath); // 递归收集孙节点
+            });
         }
     }
     
+    collectAllChildren(path);
     return childPaths;
 }
 
@@ -551,80 +611,105 @@ function handleSearch(event) {
 
 // 应用搜索筛选
 function applySearchFilter() {
-    const allRows = document.querySelectorAll('.tree-row');
-    
-    // 清空搜索筛选后的字段集合
-    searchFilteredFields.clear();
-    
-    // 首先收集所有真正匹配搜索条件的字段（不包括父节点）
-    const matchedPaths = new Set();
-    
-    allRows.forEach(row => {
-        const fieldName = row.querySelector('.field-name').textContent.toLowerCase();
-        const fieldValue = row.querySelector('.field-value')?.textContent.toLowerCase() || '';
-        const path = row.dataset.path;
+    // 使用requestAnimationFrame批量更新DOM，提高性能
+    requestAnimationFrame(() => {
+        // 清空搜索筛选后的字段集合
+        searchFilteredFields.clear();
         
-        const matches = fieldName.includes(searchTerm) || fieldValue.includes(searchTerm);
+        // 首先收集所有真正匹配搜索条件的字段
+        const matchedPaths = new Set();
         
-        if (searchTerm === '' || matches) {
-            // 如果是根节点或者真正匹配的字段
-            if (path !== 'root') {
+        // 搜索框为空时，显示所有字段
+        if (searchTerm === '') {
+            // 快速填充searchFilteredFields
+            allFieldPaths.forEach(path => {
+                searchFilteredFields.add(path);
+            });
+            
+            // 创建包含root和所有字段的显示集合
+            const allPathsToShow = new Set(['root', ...allFieldPaths]);
+            
+            // 批量更新DOM显示
+            updateTreeDisplay(allPathsToShow);
+            return;
+        }
+        
+        // 使用预构建的索引进行快速搜索，避免遍历DOM
+        fieldInfoIndex.forEach((info, path) => {
+            const matches = info.name.includes(searchTerm) || info.value.includes(searchTerm);
+            if (matches) {
                 matchedPaths.add(path);
             }
-        }
-    });
-    
-    // 将真正匹配的字段添加到searchFilteredFields
-    matchedPaths.forEach(path => {
-        searchFilteredFields.add(path);
-    });
-    
-    // 现在更新DOM显示
-    allRows.forEach(row => {
-        const path = row.dataset.path;
+        });
         
-        // 检查是否是真正匹配的字段或其父节点
-        const isRoot = path === 'root';
-        const isMatchedField = matchedPaths.has(path);
+        // 收集所有需要显示的路径（匹配的字段及其所有祖先）
+        const pathsToShow = new Set(['root']); // 始终包含root
         
-        // 检查是否是匹配字段的父节点
-        let isParentOfMatchedField = false;
-        if (!isMatchedField && !isRoot) {
-            isParentOfMatchedField = Array.from(matchedPaths).some(matchedPath => 
-                matchedPath.startsWith(path + '.')
-            );
-        }
-        
-        // 更新行显示状态
-        if (isRoot || isMatchedField || isParentOfMatchedField) {
-            row.style.display = '';
+        // 添加匹配字段及其所有祖先
+        matchedPaths.forEach(path => {
+            pathsToShow.add(path);
+            searchFilteredFields.add(path);
             
-            // 更新展开图标
-            const toggleIcon = row.querySelector('.toggle-icon');
-            if (toggleIcon && toggleIcon.textContent !== ' ') {
-                toggleIcon.textContent = '▼';
-            }
-            
-            // 确保父容器也显示
-            let parent = row.parentElement;
-            while (parent && parent.classList.contains('children')) {
-                parent.style.display = '';
-                parent = parent.parentElement.parentElement;
-            }
-        } else {
-            row.style.display = 'none';
-        }
-    });
-    
-    // 如果搜索框为空，应该包含所有字段
-    if (searchTerm === '') {
-        searchFilteredFields.clear();
-        allFieldPaths.forEach(path => {
-            if (path !== 'root') {
-                searchFilteredFields.add(path);
+            // 收集所有祖先路径
+            let currentPath = path;
+            while (parentPathMap.has(currentPath)) {
+                currentPath = parentPathMap.get(currentPath);
+                pathsToShow.add(currentPath);
             }
         });
-    }
+        
+        // 批量更新DOM显示
+        updateTreeDisplay(pathsToShow, matchedPaths);
+    });
+}
+
+// 批量更新树状结构的显示 - 性能优化版本
+function updateTreeDisplay(pathsToShow, matchedPaths = null) {
+    // 首先隐藏所有元素（使用单个操作）
+    const allItems = document.querySelectorAll('.tree-row, .children');
+    allItems.forEach(item => {
+        item.style.display = 'none';
+    });
+    
+    // 批量显示需要的行元素
+    pathsToShow.forEach(path => {
+        if (path === 'root') {
+            // 特殊处理根节点
+            const rootRow = document.querySelector('.tree-row[data-path="root"]');
+            if (rootRow) {
+                rootRow.style.display = '';
+                
+                // 展开根节点
+                const toggleIcon = rootRow.querySelector('.toggle-icon');
+                if (toggleIcon && toggleIcon.textContent !== ' ') {
+                    toggleIcon.textContent = '▼';
+                }
+                
+                // 显示根节点的子容器
+                const childrenContainer = rootRow.nextElementSibling;
+                if (childrenContainer && childrenContainer.classList.contains('children')) {
+                    childrenContainer.style.display = '';
+                }
+            }
+        } else {
+            // 使用索引快速获取元素
+            const info = fieldInfoIndex.get(path);
+            if (info && info.element) {
+                info.element.style.display = '';
+                
+                // 展开节点
+                const toggleIcon = info.element.querySelector('.toggle-icon');
+                if (toggleIcon && toggleIcon.textContent !== ' ') {
+                    toggleIcon.textContent = '▼';
+                }
+                
+                // 显示子容器
+                if (info.childrenContainer) {
+                    info.childrenContainer.style.display = '';
+                }
+            }
+        }
+    });
 }
 
 // 处理导出功能

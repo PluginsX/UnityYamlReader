@@ -3,20 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PrefabReader</title>
+    <title>UnityAssetsReader</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>PrefabReader</h1>
+            <h1>UnityAssetsReader</h1>
         </header>
         
         <div class="toolbar" id="drop-area">
-            <label for="file-upload" class="upload-btn">导入Prefab文件</label>
-            <input type="file" id="file-upload" accept=".prefab" style="display: none;">
+            <label for="file-upload" class="upload-btn">导入Unity资产文件</label>
+            <input type="file" id="file-upload" style="display: none;">
             <span id="file-name" class="file-info">未选择文件</span>
-            <span class="drop-hint">或将.prefab文件拖拽到此处</span>
+            <span class="drop-hint">支持拖拽导入</span>
         </div>
         
         <div class="search-container">
@@ -26,12 +26,12 @@
         <div class="tree-container">
             <div class="tree-controls" id="tree-controls" style="display: none;">
         <button id="select-all-btn" class="control-btn">全选</button>
-        <button id="deselect-all-btn" class="control-btn">取消所有选择</button>
+        <button id="deselect-all-btn" class="control-btn">取消所有</button>
         <button id="invert-selection-btn" class="control-btn">反选</button>
-        <button id="auto-select-children" class="toggle-button">自动选择子字段</button>
+        <button id="auto-select-children" class="toggle-button">自动选择子层级</button>
     </div>
             <div id="tree-content" class="tree-content">
-                <p class="placeholder-text">请导入.prefab文件以开始解析</p>
+                <p class="placeholder-text">请导入Unity资产文件以开始解析</p>
             </div>
         </div>
         
