@@ -13,20 +13,17 @@ body {
 }
 
 .container {
-    min-height: 100vh;
     display: flex;
     flex-direction: column;
-    max-width: 1200px;
+    width: 100vw;
+    height: 100vh;
     margin: 0 auto;
     padding: 20px;
-    height: 100vh;
 }
 
 header {
     text-align: center;
-    margin-bottom: 30px;
     padding-bottom: 20px;
-    border-bottom: 1px solid #333;
 }
 
 h1 {
@@ -176,6 +173,10 @@ h1 {
 
 .tree-row:hover {
     background-color: #2a2a2a;
+}
+
+.tree-row.search-hit {
+    background-color: rgba(74, 108, 247, 0.2);
 }
 
 .toggle-icon {
