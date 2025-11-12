@@ -3,6 +3,9 @@ let parsedData = null;
 let selectedFields = new Set();
 let searchTerm = '';
 
+// 复选框路径到DOM元素的映射（用于性能优化）
+const checkboxMap = new Map();
+
 // DOM元素引用
 const fileUpload = document.getElementById('file-upload');
 const fileNameDisplay = document.getElementById('file-name');
@@ -179,6 +182,7 @@ function renderTree(data) {
     // 清空树内容
     treeContent.innerHTML = '';
     allFieldPaths.clear();
+    checkboxMap.clear(); // 清空复选框映射
     
     if (!data || typeof data !== 'object') {
         treeContent.innerHTML = '<p class="placeholder-text">文件内容为空或无效</p>';
@@ -247,6 +251,11 @@ function renderNode(container, data, fieldName, parentPath = '') {
     checkboxContainer.appendChild(checkbox);
     treeRow.appendChild(checkboxContainer);
     
+    // 将复选框添加到映射中（用于性能优化）
+    if (currentPath !== 'root') {
+        checkboxMap.set(currentPath, checkbox);
+    }
+    
     // 添加字段信息
     const fieldInfo = document.createElement('div');
     fieldInfo.className = 'field-info';
@@ -308,16 +317,49 @@ function toggleNode(childrenContainer) {
     }
 }
 
-// 递归收集所有子路径
+// 递归收集所有子路径（优化版本：使用数组过滤）
 function getAllChildPaths(parentPath) {
-    const childPaths = [];
-    // 从 allFieldPaths 中查找所有以 parentPath 开头的路径
-    allFieldPaths.forEach(fieldPath => {
-        if (fieldPath.startsWith(`${parentPath}.`)) {
-            childPaths.push(fieldPath);
-        }
-    });
-    return childPaths;
+    const prefix = `${parentPath}.`;
+    // 使用数组过滤，比 forEach 更高效
+    return Array.from(allFieldPaths).filter(fieldPath => fieldPath.startsWith(prefix));
+}
+
+// 批量更新复选框状态（性能优化）
+function batchUpdateCheckboxes(paths, checked) {
+    // 使用 requestAnimationFrame 来批量更新，避免阻塞UI
+    if (paths.length === 0) return;
+    
+    // 如果路径数量较少，直接更新
+    if (paths.length < 100) {
+        paths.forEach(path => {
+            const checkbox = checkboxMap.get(path);
+            if (checkbox) {
+                checkbox.checked = checked;
+            }
+        });
+    } else {
+        // 如果路径数量较多，分批更新
+        const batchSize = 50;
+        let index = 0;
+        
+        const updateBatch = () => {
+            const end = Math.min(index + batchSize, paths.length);
+            for (let i = index; i < end; i++) {
+                const checkbox = checkboxMap.get(paths[i]);
+                if (checkbox) {
+                    checkbox.checked = checked;
+                }
+            }
+            index = end;
+            
+            if (index < paths.length) {
+                // 使用 setTimeout 让浏览器有机会更新UI
+                setTimeout(updateBatch, 0);
+            }
+        };
+        
+        updateBatch();
+    }
 }
 
 // 处理复选框变化
@@ -330,31 +372,37 @@ function handleCheckboxChange(checkbox, data, path) {
         
         // 自动选中所有子字段
         const childPaths = getAllChildPaths(path);
+        
+        // 批量添加到选中集合
         childPaths.forEach(childPath => {
             selectedFields.add(childPath);
-            // 更新子复选框的显示状态
-            updateCheckboxState(childPath, true);
         });
+        
+        // 批量更新复选框状态
+        batchUpdateCheckboxes(childPaths, true);
     } else {
         // 取消选中当前字段
         selectedFields.delete(path);
         
-        // 删除所有子路径的选中状态
+        // 获取所有子路径
         const pathsToDelete = Array.from(selectedFields).filter(p => p.startsWith(`${path}.`));
+        
+        // 批量从选中集合中删除
         pathsToDelete.forEach(p => {
             selectedFields.delete(p);
-            // 更新子复选框的显示状态
-            updateCheckboxState(p, false);
         });
+        
+        // 批量更新复选框状态
+        batchUpdateCheckboxes(pathsToDelete, false);
     }
     
     // 更新选中数量显示
     updateSelectedCount();
 }
 
-// 更新指定路径的复选框状态
+// 更新指定路径的复选框状态（保留用于单个更新）
 function updateCheckboxState(path, checked) {
-    const checkbox = document.querySelector(`input[type="checkbox"][data-path="${path}"]`);
+    const checkbox = checkboxMap.get(path);
     if (checkbox) {
         checkbox.checked = checked;
     }
@@ -568,14 +616,11 @@ function handleInvertSelection() {
     updateSelectedCount();
 }
 
-// 更新所有复选框状态
+// 更新所有复选框状态（性能优化版本）
 function updateAllCheckboxes() {
-    const allCheckboxes = document.querySelectorAll('.checkbox-container input[type="checkbox"]');
-    allCheckboxes.forEach(checkbox => {
-        const path = checkbox.dataset.path;
-        if (path && path !== 'root') {
-            checkbox.checked = selectedFields.has(path);
-        }
+    // 使用 checkboxMap 而不是 querySelectorAll，性能更好
+    checkboxMap.forEach((checkbox, path) => {
+        checkbox.checked = selectedFields.has(path);
     });
 }
 
