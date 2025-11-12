@@ -50,10 +50,12 @@ const filterValueBtn = document.getElementById('filter-value');
 const scrollPrevBtn = document.getElementById('scroll-prev');
 const scrollNextBtn = document.getElementById('scroll-next');
 const selectMatchedBtn = document.getElementById('select-matched-btn');
+const preserveHierarchyBtn = document.getElementById('preserve-hierarchy');
 
 // 搜索筛选状态
 let searchFilterKey = true;
 let searchFilterValue = true;
+let preserveHierarchy = true; // 默认保留层级
 
 // 防抖函数
 function debounce(func, wait) {
@@ -161,6 +163,29 @@ function initApp() {
     // 添加选择所有匹配字段按钮事件处理
     if (selectMatchedBtn) {
         selectMatchedBtn.addEventListener('click', handleSelectMatchedFields);
+    }
+    
+    // 添加保留层级按钮事件处理
+    if (preserveHierarchyBtn) {
+        preserveHierarchyBtn.addEventListener('click', function() {
+            // 切换状态
+            preserveHierarchy = !preserveHierarchy;
+            // 更新按钮样式
+            if (preserveHierarchy) {
+                preserveHierarchyBtn.classList.add('active');
+                preserveHierarchyBtn.textContent = '保留层级';
+            } else {
+                preserveHierarchyBtn.classList.remove('active');
+                preserveHierarchyBtn.textContent = '忽略层级';
+            }
+            // 重新应用搜索筛选以更新显示
+            if (searchTerm) {
+                applySearchFilter(searchTerm);
+            }
+        });
+        // 初始状态
+        preserveHierarchyBtn.classList.add('active');
+        preserveHierarchyBtn.textContent = '保留层级';
     }
 }
 
@@ -539,18 +564,47 @@ function toggleNode(path) {
     if (!info || !info.childrenContainer) return;
     
     const isVisible = info.childrenContainer.style.display !== 'none';
-    if (!isVisible) {
+    const newVisibility = !isVisible ? 'block' : 'none';
+    const shouldExpand = !isVisible;
+    
+    // 首先处理当前节点
+    if (shouldExpand) {
         renderChildrenForPath(path);
-        info.childrenContainer.style.display = 'block';
+        info.childrenContainer.style.display = newVisibility;
         expandedPaths.add(path);
     } else {
-        info.childrenContainer.style.display = 'none';
+        info.childrenContainer.style.display = newVisibility;
         expandedPaths.delete(path); // 移除对Root路径的特殊处理，允许其正常折叠
     }
     
     const toggleIcon = info.element.querySelector('.toggle-icon');
     if (toggleIcon) {
         toggleIcon.textContent = isVisible ? '▶' : '▼';
+    }
+    
+    // 如果启用了同步操作子层级，则同步处理所有子节点
+    if (autoSelectChildren) {
+        const allChildPaths = getAllChildPaths(path);
+        allChildPaths.forEach(childPath => {
+            const childInfo = fieldInfoIndex.get(childPath);
+            if (childInfo && childInfo.childrenContainer) {
+                if (shouldExpand) {
+                    // 确保子节点的子节点也被渲染
+                    renderChildrenForPath(childPath);
+                    childInfo.childrenContainer.style.display = 'block';
+                    expandedPaths.add(childPath);
+                } else {
+                    childInfo.childrenContainer.style.display = 'none';
+                    expandedPaths.delete(childPath);
+                }
+                
+                // 更新子节点的图标
+                const childToggleIcon = childInfo.element.querySelector('.toggle-icon');
+                if (childToggleIcon) {
+                    childToggleIcon.textContent = shouldExpand ? '▼' : '▶';
+                }
+            }
+        });
     }
     
     // 更新可见性以匹配新的展开状态（仅在未处于搜索模式时执行）
@@ -860,7 +914,7 @@ function handleSearch(event) {
     applySearchFilter(term);
 }
 
-// 应用搜索筛选 - 修改以支持键值筛选和自动展开功能
+// 应用搜索筛选 - 修改以支持键值筛选和保留层级功能
 function applySearchFilter(term) {
     // 重置所有行的可见性
     document.querySelectorAll('.tree-row').forEach(row => {
@@ -902,27 +956,30 @@ function applySearchFilter(term) {
     // 更新搜索筛选字段集合
     searchFilteredFields.clear();
     
-    // 确保所有匹配字段及其父节点都被渲染和展开
+    // 确保所有匹配字段都被添加到筛选集合中
     matchedPaths.forEach(path => {
         searchFilteredFields.add(path);
         
-        // 自动展开到匹配字段：确保所有父节点都被渲染和展开
-        let currentPath = path;
-        let parentPath = parentPathMap.get(currentPath);
-        
-        // 从匹配字段向上遍历到根节点
-        while (parentPath) {
-            searchFilteredFields.add(parentPath);
+        // 根据preserveHierarchy状态决定是否添加父节点
+        if (preserveHierarchy) {
+            // 保留层级：添加所有父节点到筛选集合中
+            let currentPath = path;
+            let parentPath = parentPathMap.get(currentPath);
             
-            // 确保父节点被渲染
-            ensurePathRendered(parentPath);
-            
-            // 确保父节点被展开
-            expandedPaths.add(parentPath);
-            
-            // 继续向上遍历
-            currentPath = parentPath;
-            parentPath = parentPathMap.get(currentPath);
+            // 从匹配字段向上遍历到根节点
+            while (parentPath) {
+                searchFilteredFields.add(parentPath);
+                
+                // 确保父节点被渲染
+                ensurePathRendered(parentPath);
+                
+                // 确保父节点被展开
+                expandedPaths.add(parentPath);
+                
+                // 继续向上遍历
+                currentPath = parentPath;
+                parentPath = parentPathMap.get(currentPath);
+            }
         }
     });
     
@@ -993,6 +1050,7 @@ function scrollToSelectedField(direction) {
 
 // 搜索模式下更新树显示
 function updateTreeDisplayForSearch(pathsToShow, matchedPaths) {
+    // 清除所有搜索相关样式并重置显示
     fieldInfoIndex.forEach((info, path) => {
         if (!info.element) return;
         info.element.classList.remove('search-hit');
@@ -1006,34 +1064,70 @@ function updateTreeDisplayForSearch(pathsToShow, matchedPaths) {
         }
     });
     
-    pathsToShow.forEach(path => {
-        const info = fieldInfoIndex.get(path);
-        if (!info || !info.element) return;
-        
-        info.element.style.display = '';
-        if (matchedPaths.has(path)) {
-            info.element.classList.add('search-hit');
-        }
-        
-        if (info.childrenContainer) {
-            // 检查是否应该展开（根据expandedPaths或是否有可见子节点）
-            const shouldExpand = expandedPaths.has(path) || 
-                (() => {
-                    const children = childPathMap.get(path);
-                    return children ? Array.from(children).some(childPath => pathsToShow.has(childPath)) : false;
-                })();
-                
-            if (shouldExpand) {
-                // 确保子节点被渲染
-                renderChildrenForPath(path);
-                info.childrenContainer.style.display = 'block';
-                const toggleIcon = info.element.querySelector('.toggle-icon');
+    // 根据preserveHierarchy状态决定如何显示节点
+    if (preserveHierarchy) {
+        // 保留层级：显示搜索筛选字段集合中的所有节点（包括匹配节点及其父节点）
+        pathsToShow.forEach(path => {
+            const info = fieldInfoIndex.get(path);
+            if (!info || !info.element) return;
+            
+            info.element.style.display = '';
+            if (matchedPaths.has(path)) {
+                info.element.classList.add('search-hit');
+            }
+            
+            if (info.childrenContainer) {
+                // 检查是否应该展开（根据expandedPaths或是否有可见子节点）
+                const shouldExpand = expandedPaths.has(path) || 
+                    (() => {
+                        const children = childPathMap.get(path);
+                        return children ? Array.from(children).some(childPath => pathsToShow.has(childPath)) : false;
+                    })();
+                    
+                if (shouldExpand) {
+                    // 确保子节点被渲染
+                    renderChildrenForPath(path);
+                    info.childrenContainer.style.display = 'block';
+                    const toggleIcon = info.element.querySelector('.toggle-icon');
+                    if (toggleIcon && toggleIcon.textContent !== ' ') {
+                        toggleIcon.textContent = '▼';
+                    }
+                }
+            }
+        });
+    } else {
+        // 忽略层级：显示Root层级和所有匹配的节点
+        // 1. 显示Root节点
+        const rootInfo = fieldInfoIndex.get('root');
+        if (rootInfo && rootInfo.element) {
+            rootInfo.element.style.display = '';
+            if (rootInfo.childrenContainer) {
+                rootInfo.childrenContainer.style.display = 'block';
+                const toggleIcon = rootInfo.element.querySelector('.toggle-icon');
                 if (toggleIcon && toggleIcon.textContent !== ' ') {
                     toggleIcon.textContent = '▼';
                 }
             }
         }
-    });
+        
+        // 2. 显示所有匹配的节点
+        matchedPaths.forEach(path => {
+            const info = fieldInfoIndex.get(path);
+            if (!info || !info.element) return;
+            
+            // 确保节点被渲染
+            ensurePathRendered(path);
+            
+            // 显示匹配的节点并添加搜索命中样式
+            info.element.style.display = '';
+            info.element.classList.add('search-hit');
+            
+            // 忽略层级时，不需要展开子节点
+            if (info.childrenContainer) {
+                info.childrenContainer.style.display = 'none';
+            }
+        });
+    }
 }
 
 // 清理搜索模式下的样式和临时显示
