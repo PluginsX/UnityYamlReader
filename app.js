@@ -6,6 +6,12 @@ let searchTerm = '';
 // 复选框路径到DOM元素的映射（用于性能优化）
 const checkboxMap = new Map();
 
+// 存储搜索筛选后的字段
+const searchFilteredFields = new Set(); // 存储搜索筛选后的字段
+
+// 自动选择子字段的开关状态
+let autoSelectChildren = false; // 默认禁用自动选择子字段
+
 // DOM元素引用
 const fileUpload = document.getElementById('file-upload');
 const fileNameDisplay = document.getElementById('file-name');
@@ -37,6 +43,22 @@ function initApp() {
     selectAllBtn.addEventListener('click', handleSelectAll);
     deselectAllBtn.addEventListener('click', handleDeselectAll);
     invertSelectionBtn.addEventListener('click', handleInvertSelection);
+    
+    // 添加自动选择子字段开关按钮的点击事件
+    const autoSelectBtn = document.getElementById('auto-select-children');
+    if (autoSelectBtn) {
+        autoSelectBtn.addEventListener('click', function() {
+            // 切换状态
+            autoSelectChildren = !autoSelectChildren;
+            
+            // 更新按钮样式
+            if (autoSelectChildren) {
+                autoSelectBtn.classList.add('active');
+            } else {
+                autoSelectBtn.classList.remove('active');
+            }
+        });
+    }
 }
 
 // 设置拖拽区域功能
@@ -58,9 +80,12 @@ function setupDragAndDrop() {
     // 处理放置事件
     dropArea.addEventListener('drop', handleDrop, false);
     
-    // 点击拖拽区域也可以选择文件
-    dropArea.addEventListener('click', () => {
-        fileUpload.click();
+    // 点击拖拽区域也可以选择文件，但避免与上传按钮点击冲突
+    dropArea.addEventListener('click', (e) => {
+        // 只有当点击的不是上传按钮时才触发文件选择
+        if (!e.target.closest('.upload-btn') && !e.target.closest('#file-upload')) {
+            fileUpload.click();
+        }
     });
 }
 
@@ -322,11 +347,20 @@ function toggleNode(childrenContainer) {
     }
 }
 
-// 递归收集所有子路径（优化版本：使用数组过滤）
-function getAllChildPaths(parentPath) {
-    const prefix = `${parentPath}.`;
-    // 使用数组过滤，比 forEach 更高效
-    return Array.from(allFieldPaths).filter(fieldPath => fieldPath.startsWith(prefix));
+// 获取字段的所有子字段路径 - 优化版本
+function getAllChildPaths(path) {
+    const childPaths = [];
+    const prefix = path + '.';
+    
+    // 使用Set优化查找逻辑
+    for (const currentPath of allFieldPaths) {
+        // 检查是否是当前路径的子路径
+        if (currentPath.startsWith(prefix)) {
+            childPaths.push(currentPath);
+        }
+    }
+    
+    return childPaths;
 }
 
 // 批量更新复选框状态（性能优化）
@@ -371,34 +405,51 @@ function batchUpdateCheckboxes(paths, checked) {
 function handleCheckboxChange(checkbox, data, path) {
     const isChecked = checkbox.checked;
     
-    if (isChecked) {
-        // 选中当前字段
-        selectedFields.add(path);
+    // 确保path在searchFilteredFields中才处理
+    if (searchFilteredFields.has(path) || path === 'root') {
+        if (isChecked) {
+            // 选中当前字段
+            selectedFields.add(path);
+            
+            // 只有在autoSelectChildren为true时才自动选择所有子字段
+            if (autoSelectChildren) {
+                // 获取并选中所有子字段（使用现有的getAllChildPaths函数确保一致性）
+                const childPaths = getAllChildPaths(path);
+                childPaths.forEach(childPath => {
+                    // 只选择搜索筛选后的子字段
+                    if (searchFilteredFields.has(childPath)) {
+                        selectedFields.add(childPath);
+                    }
+                });
+                
+                // 批量更新复选框状态
+                batchUpdateCheckboxes(childPaths, true);
+            }
+        } else {
+            // 取消选中当前字段
+            selectedFields.delete(path);
+            
+            // 只有在autoSelectChildren为true时才自动取消选择所有子字段
+            if (autoSelectChildren) {
+                // 获取并取消选中所有子字段
+                const childPaths = getAllChildPaths(path);
+                childPaths.forEach(childPath => {
+                    // 只取消选择搜索筛选后的子字段
+                    if (searchFilteredFields.has(childPath)) {
+                        selectedFields.delete(childPath);
+                    }
+                });
+                
+                // 批量更新复选框状态
+                batchUpdateCheckboxes(childPaths, false);
+            }
+        }
         
-        // 获取并选中所有子字段（使用现有的getAllChildPaths函数确保一致性）
-        const childPaths = getAllChildPaths(path);
-        childPaths.forEach(childPath => {
-            selectedFields.add(childPath);
-        });
-        
-        // 批量更新复选框状态
-        batchUpdateCheckboxes(childPaths, true);
-    } else {
-        // 取消选中当前字段
-        selectedFields.delete(path);
-        
-        // 获取并取消选中所有子字段
-        const childPaths = getAllChildPaths(path);
-        childPaths.forEach(childPath => {
-            selectedFields.delete(childPath);
-        });
-        
-        // 批量更新复选框状态
-        batchUpdateCheckboxes(childPaths, false);
+        // 更新所有父节点的复选框状态
+        if (path && path !== 'root') {
+            updateParentCheckboxes(path);
+        }
     }
-    
-    // 更新所有父节点的复选框状态
-    updateParentCheckboxes(path);
     
     // 更新选中数量显示
     updateSelectedCount();
@@ -409,6 +460,55 @@ function updateCheckboxState(path, checked) {
     const checkbox = checkboxMap.get(path);
     if (checkbox) {
         checkbox.checked = checked;
+    }
+}
+
+// 更新父节点的复选框状态
+function updateParentCheckboxes(path) {
+    // 分解路径，找出所有父路径
+    const parts = path.split('.');
+    
+    // 从倒数第二级开始，向上遍历父路径
+    for (let i = parts.length - 1; i >= 1; i--) {
+        const parentPath = parts.slice(0, i).join('.');
+        
+        // 获取当前父路径对应的所有直接子路径
+        const directChildPaths = Array.from(allFieldPaths).filter(childPath => {
+            const childParts = childPath.split('.');
+            return childParts.length === i + 1 && 
+                   childParts.slice(0, i).join('.') === parentPath;
+        });
+        
+        // 检查所有直接子路径的选中状态
+        let allChecked = true;
+        let anyChecked = false;
+        
+        directChildPaths.forEach(childPath => {
+            const isChecked = selectedFields.has(childPath);
+            allChecked = allChecked && isChecked;
+            anyChecked = anyChecked || isChecked;
+        });
+        
+        // 更新父节点的选中状态
+        const parentCheckbox = checkboxMap.get(parentPath);
+        if (parentCheckbox) {
+            // 只有当所有子节点都被选中时，父节点才显示为选中
+            const wasChecked = selectedFields.has(parentPath);
+            
+            if (allChecked) {
+                selectedFields.add(parentPath);
+                parentCheckbox.checked = true;
+            } else {
+                selectedFields.delete(parentPath);
+                parentCheckbox.checked = false;
+            }
+            
+            // 如果父节点状态发生变化，递归更新其父节点
+            const isNowChecked = selectedFields.has(parentPath);
+            if (wasChecked !== isNowChecked) {
+                // 注意：这里不需要递归调用，因为我们已经在循环中向上遍历
+            }
+        }
     }
 }
 
@@ -453,45 +553,94 @@ function handleSearch(event) {
 function applySearchFilter() {
     const allRows = document.querySelectorAll('.tree-row');
     
+    // 清空搜索筛选后的字段集合
+    searchFilteredFields.clear();
+    
+    // 首先收集所有真正匹配搜索条件的字段（不包括父节点）
+    const matchedPaths = new Set();
+    
     allRows.forEach(row => {
         const fieldName = row.querySelector('.field-name').textContent.toLowerCase();
         const fieldValue = row.querySelector('.field-value')?.textContent.toLowerCase() || '';
+        const path = row.dataset.path;
         
         const matches = fieldName.includes(searchTerm) || fieldValue.includes(searchTerm);
         
         if (searchTerm === '' || matches) {
+            // 如果是根节点或者真正匹配的字段
+            if (path !== 'root') {
+                matchedPaths.add(path);
+            }
+        }
+    });
+    
+    // 将真正匹配的字段添加到searchFilteredFields
+    matchedPaths.forEach(path => {
+        searchFilteredFields.add(path);
+    });
+    
+    // 现在更新DOM显示
+    allRows.forEach(row => {
+        const path = row.dataset.path;
+        
+        // 检查是否是真正匹配的字段或其父节点
+        const isRoot = path === 'root';
+        const isMatchedField = matchedPaths.has(path);
+        
+        // 检查是否是匹配字段的父节点
+        let isParentOfMatchedField = false;
+        if (!isMatchedField && !isRoot) {
+            isParentOfMatchedField = Array.from(matchedPaths).some(matchedPath => 
+                matchedPath.startsWith(path + '.')
+            );
+        }
+        
+        // 更新行显示状态
+        if (isRoot || isMatchedField || isParentOfMatchedField) {
             row.style.display = '';
-            // 确保父节点也显示
+            
+            // 更新展开图标
+            const toggleIcon = row.querySelector('.toggle-icon');
+            if (toggleIcon && toggleIcon.textContent !== ' ') {
+                toggleIcon.textContent = '▼';
+            }
+            
+            // 确保父容器也显示
             let parent = row.parentElement;
             while (parent && parent.classList.contains('children')) {
                 parent.style.display = '';
-                // 更新父节点的展开图标
-                const parentRow = parent.previousElementSibling;
-                if (parentRow && parentRow.classList.contains('tree-row')) {
-                    const toggleIcon = parentRow.querySelector('.toggle-icon');
-                    if (toggleIcon) {
-                        toggleIcon.textContent = '▼';
-                    }
-                }
                 parent = parent.parentElement.parentElement;
             }
         } else {
             row.style.display = 'none';
         }
     });
+    
+    // 如果搜索框为空，应该包含所有字段
+    if (searchTerm === '') {
+        searchFilteredFields.clear();
+        allFieldPaths.forEach(path => {
+            if (path !== 'root') {
+                searchFilteredFields.add(path);
+            }
+        });
+    }
 }
 
 // 处理导出功能
 function handleExport() {
-    if (selectedFields.size === 0) {
+    // 过滤出同时存在于searchFilteredFields和selectedFields中的字段（用户在搜索筛选字段上选择的字段）
+    const fieldsToExport = Array.from(selectedFields).filter(path => searchFilteredFields.has(path));
+    
+    if (fieldsToExport.length === 0) {
         alert('请选择要导出的字段！');
         return;
     }
     
     const exportData = {};
     
-    // 收集选中的字段数据
-    selectedFields.forEach(path => {
+    // 收集要导出的字段数据
+    fieldsToExport.forEach(path => {
         const value = getValueByPath(parsedData, path);
         setValueByPath(exportData, path, value);
     });
@@ -578,35 +727,30 @@ function setValueByPath(obj, path, value) {
 
 // 获取当前可见的字段路径（搜索筛选后的字段）
 function getVisibleFieldPaths() {
-    const visiblePaths = new Set();
-    const visibleRows = document.querySelectorAll('.tree-row:not([style="display: none"])');
-    
-    visibleRows.forEach(row => {
-        const path = row.dataset.path;
-        if (path && path !== 'root') {
-            visiblePaths.add(path);
-        }
-    });
-    
-    return visiblePaths;
+    // 直接返回searchFilteredFields集合，避免重复查询DOM
+    return new Set(searchFilteredFields);
 }
 
-// 全选功能 - 仅应用于搜索筛选后的字段
+// 全选功能 - 仅应用于搜索筛选后的字段 - 优化版本
 function handleSelectAll() {
-    // 获取当前可见的字段路径
-    const visiblePaths = getVisibleFieldPaths();
+    // 创建新的Set以避免在迭代过程中修改集合
+    const newSelectedFields = new Set(selectedFields);
     
-    // 将可见字段路径添加到选中集合
-    visiblePaths.forEach(path => {
-        // 选中当前字段
-        selectedFields.add(path);
+    // 添加所有搜索筛选后的字段及其子字段
+    searchFilteredFields.forEach(path => {
+        // 选中当前字段（仅当它是搜索筛选后的字段时）
+        newSelectedFields.add(path);
         
         // 自动选中所有子字段（如果有）
         const childPaths = getAllChildPaths(path);
         childPaths.forEach(childPath => {
-            selectedFields.add(childPath);
+            newSelectedFields.add(childPath);
         });
     });
+    
+    // 一次性替换selectedFields
+    selectedFields.clear();
+    newSelectedFields.forEach(path => selectedFields.add(path));
     
     // 更新所有复选框状态
     updateAllCheckboxes();
@@ -615,24 +759,28 @@ function handleSelectAll() {
     updateSelectedCount();
 }
 
-// 取消所有选择功能 - 仅应用于搜索筛选后的字段
+// 取消所有选择功能 - 仅应用于搜索筛选后的字段 - 优化版本
 function handleDeselectAll() {
-    // 获取当前可见的字段路径
-    const visiblePaths = getVisibleFieldPaths();
+    // 创建新的Set以避免在迭代过程中修改集合
+    const newSelectedFields = new Set(selectedFields);
     
-    // 遍历可见字段路径，取消选中当前字段及其所有子字段
-    visiblePaths.forEach(path => {
-        // 取消选中当前字段
-        selectedFields.delete(path);
+    // 移除所有搜索筛选后的字段及其子字段
+    searchFilteredFields.forEach(path => {
+        // 取消选中当前字段（仅当它是搜索筛选后的字段时）
+        newSelectedFields.delete(path);
         
         // 获取所有子路径
         const childPaths = getAllChildPaths(path);
         
         // 批量从选中集合中删除
         childPaths.forEach(childPath => {
-            selectedFields.delete(childPath);
+            newSelectedFields.delete(childPath);
         });
     });
+    
+    // 一次性替换selectedFields
+    selectedFields.clear();
+    newSelectedFields.forEach(path => selectedFields.add(path));
     
     // 更新所有复选框状态
     updateAllCheckboxes();
@@ -641,29 +789,33 @@ function handleDeselectAll() {
     updateSelectedCount();
 }
 
-// 反选功能 - 仅应用于搜索筛选后的字段
+// 反选功能 - 仅应用于搜索筛选后的字段 - 优化版本
 function handleInvertSelection() {
-    // 获取当前可见的字段路径
-    const visiblePaths = getVisibleFieldPaths();
+    // 创建新的Set以避免在迭代过程中修改集合
+    const newSelectedFields = new Set(selectedFields);
     
-    // 遍历可见字段路径，切换选中状态
-    visiblePaths.forEach(path => {
-        if (selectedFields.has(path)) {
+    // 遍历所有搜索筛选后的字段进行反选
+    searchFilteredFields.forEach(path => {
+        if (newSelectedFields.has(path)) {
             // 如果已选中，则取消选中当前字段及其所有子字段
-            selectedFields.delete(path);
+            newSelectedFields.delete(path);
             const childPaths = getAllChildPaths(path);
             childPaths.forEach(childPath => {
-                selectedFields.delete(childPath);
+                newSelectedFields.delete(childPath);
             });
         } else {
             // 如果未选中，则选中当前字段及其所有子字段
-            selectedFields.add(path);
+            newSelectedFields.add(path);
             const childPaths = getAllChildPaths(path);
             childPaths.forEach(childPath => {
-                selectedFields.add(childPath);
+                newSelectedFields.add(childPath);
             });
         }
     });
+    
+    // 一次性替换selectedFields
+    selectedFields.clear();
+    newSelectedFields.forEach(path => selectedFields.add(path));
     
     // 更新所有复选框状态
     updateAllCheckboxes();
