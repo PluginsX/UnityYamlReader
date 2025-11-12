@@ -137,3 +137,10 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Project specific
+# 示例文件保留在仓库中，但可以忽略其他临时文件
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
