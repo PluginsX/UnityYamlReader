@@ -20,7 +20,16 @@
         </div>
         
         <div class="search-container">
+            <div class="search-filters">
+                <button id="filter-key" class="filter-btn active">键</button>
+                <button id="filter-value" class="filter-btn active">值</button>
+            </div>
             <input type="text" id="search-input" placeholder="搜索字段...">
+            <button id="select-matched-btn" class="control-btn">选择所有匹配字段</button>
+            <div class="search-scroll-controls">
+                <button id="scroll-prev" class="scroll-btn">▲</button>
+                <button id="scroll-next" class="scroll-btn">▼</button>
+            </div>
         </div>
         
         <div class="tree-container">
@@ -29,6 +38,10 @@
         <button id="deselect-all-btn" class="control-btn">取消所有</button>
         <button id="invert-selection-btn" class="control-btn">反选</button>
         <button id="auto-select-children" class="toggle-button">同步操作子层级</button>
+        <div style="margin-left: auto;">
+            <button id="lock-selection-btn" class="control-btn">锁定选择</button>
+            <button id="unlock-visible-btn" class="control-btn">解锁可见</button>
+        </div>
     </div>
             <div id="tree-content" class="tree-content">
                 <p class="placeholder-text">请导入Unity资产文件以开始解析</p>

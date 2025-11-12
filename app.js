@@ -1,6 +1,7 @@
 // 全局变量存储解析后的数据
 let parsedData = null;
 let selectedFields = new Set();
+let lockedFields = new Set(); // 存储锁定的字段
 let searchTerm = '';
 
 // 复选框路径到DOM元素的映射（用于性能优化）
@@ -42,6 +43,17 @@ const treeControls = document.getElementById('tree-controls');
 const selectAllBtn = document.getElementById('select-all-btn');
 const deselectAllBtn = document.getElementById('deselect-all-btn');
 const invertSelectionBtn = document.getElementById('invert-selection-btn');
+const lockSelectionBtn = document.getElementById('lock-selection-btn');
+const unlockVisibleBtn = document.getElementById('unlock-visible-btn');
+const filterKeyBtn = document.getElementById('filter-key');
+const filterValueBtn = document.getElementById('filter-value');
+const scrollPrevBtn = document.getElementById('scroll-prev');
+const scrollNextBtn = document.getElementById('scroll-next');
+const selectMatchedBtn = document.getElementById('select-matched-btn');
+
+// 搜索筛选状态
+let searchFilterKey = true;
+let searchFilterValue = true;
 
 // 防抖函数
 function debounce(func, wait) {
@@ -74,6 +86,10 @@ function initApp() {
     selectAllBtn.addEventListener('click', handleSelectAll);
     deselectAllBtn.addEventListener('click', handleDeselectAll);
     invertSelectionBtn.addEventListener('click', handleInvertSelection);
+    lockSelectionBtn.addEventListener('click', handleLockSelection);
+    if (unlockVisibleBtn) {
+        unlockVisibleBtn.addEventListener('click', handleUnlockVisible);
+    }
     
     // 添加自动选择子字段开关按钮的点击事件
     const autoSelectBtn = document.getElementById('auto-select-children');
@@ -90,6 +106,61 @@ function initApp() {
                 autoSelectBtn.classList.remove('active');
             }
         });
+    }
+    
+    // 添加锁定选择按钮事件处理
+    if (lockSelectionBtn) {
+        lockSelectionBtn.addEventListener('click', handleLockSelection);
+    }
+    
+    // 添加解锁可见按钮事件处理
+    if (unlockVisibleBtn) {
+        unlockVisibleBtn.addEventListener('click', handleUnlockVisible);
+    }
+    
+    // 添加搜索筛选按钮事件处理
+    if (filterKeyBtn) {
+        filterKeyBtn.addEventListener('click', function() {
+            searchFilterKey = !searchFilterKey;
+            updateFilterButtonStyle(filterKeyBtn, searchFilterKey);
+            // 重新应用搜索筛选
+            if (searchTerm) {
+                applySearchFilter(searchTerm);
+            }
+        });
+        // 初始状态设为选中
+        filterKeyBtn.classList.add('active');
+    }
+    
+    if (filterValueBtn) {
+        filterValueBtn.addEventListener('click', function() {
+            searchFilterValue = !searchFilterValue;
+            updateFilterButtonStyle(filterValueBtn, searchFilterValue);
+            // 重新应用搜索筛选
+            if (searchTerm) {
+                applySearchFilter(searchTerm);
+            }
+        });
+        // 初始状态设为选中
+        filterValueBtn.classList.add('active');
+    }
+    
+    // 添加滚动控制按钮事件处理
+    if (scrollPrevBtn) {
+        scrollPrevBtn.addEventListener('click', function() {
+            scrollToSelectedField('prev');
+        });
+    }
+    
+    if (scrollNextBtn) {
+        scrollNextBtn.addEventListener('click', function() {
+            scrollToSelectedField('next');
+        });
+    }
+    
+    // 添加选择所有匹配字段按钮事件处理
+    if (selectMatchedBtn) {
+        selectMatchedBtn.addEventListener('click', handleSelectMatchedFields);
     }
 }
 
@@ -188,10 +259,11 @@ function handleFile(file) {
             parsedData = data.data;
             
             // 重置所有相关集合和映射
-            selectedFields.clear();
-            fieldInfoIndex.clear();
-            parentPathMap.clear();
-            childPathMap.clear();
+    selectedFields.clear();
+    lockedFields.clear();
+    fieldInfoIndex.clear();
+    parentPathMap.clear();
+    childPathMap.clear();
             
             updateSelectedCount();
             
@@ -366,6 +438,10 @@ function createTreeRow(path, container) {
         checkbox.disabled = true;
     } else {
         checkboxMap.set(path, checkbox);
+        // 如果字段被锁定，禁用复选框
+        if (lockedFields.has(path)) {
+            checkbox.disabled = true;
+        }
     }
     
     checkboxContainer.appendChild(checkbox);
@@ -383,6 +459,19 @@ function createTreeRow(path, container) {
     fieldValue.className = 'field-value';
     fieldValue.textContent = metadata.valueText;
     fieldInfo.appendChild(fieldValue);
+    
+    // 添加锁定复选框（非root节点）
+    if (path !== 'root') {
+        const lockCheckbox = document.createElement('span');
+        lockCheckbox.className = `lock-checkbox ${lockedFields.has(path) ? 'locked' : 'unlocked'}`;
+        lockCheckbox.textContent = lockedFields.has(path) ? '🔒' : '🔓';
+        lockCheckbox.dataset.path = path;
+        lockCheckbox.addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleLockToggle(path, lockCheckbox);
+        });
+        fieldInfo.appendChild(lockCheckbox);
+    }
     
     treeRow.appendChild(fieldInfo);
     container.appendChild(treeRow);
@@ -456,9 +545,7 @@ function toggleNode(path) {
         expandedPaths.add(path);
     } else {
         info.childrenContainer.style.display = 'none';
-        if (path !== 'root') {
-            expandedPaths.delete(path);
-        }
+        expandedPaths.delete(path); // 移除对Root路径的特殊处理，允许其正常折叠
     }
     
     const toggleIcon = info.element.querySelector('.toggle-icon');
@@ -531,9 +618,81 @@ function batchUpdateCheckboxes(paths, checked) {
     }
 }
 
+// 处理锁定状态切换
+function handleLockToggle(path, lockCheckbox) {
+    const isLocked = lockedFields.has(path);
+    const newLockedState = !isLocked;
+    
+    // 获取需要更新的字段路径集合
+    let pathsToUpdate = [path];
+    
+    // 如果启用了同步操作子层级，则包含所有子字段
+    if (autoSelectChildren) {
+        const childPaths = getAllChildPaths(path);
+        pathsToUpdate = pathsToUpdate.concat(childPaths);
+    }
+    
+    // 更新锁定状态
+    pathsToUpdate.forEach(updatePath => {
+        if (newLockedState) {
+            // 锁定字段
+            lockedFields.add(updatePath);
+            
+            // 禁用复选框
+            const checkbox = checkboxMap.get(updatePath);
+            if (checkbox) {
+                checkbox.disabled = true;
+            }
+            
+            // 更新锁定图标
+            const row = fieldInfoIndex.get(updatePath)?.element;
+            if (row) {
+                const icon = row.querySelector('.lock-checkbox');
+                if (icon) {
+                    icon.className = 'lock-checkbox locked';
+                    icon.textContent = '🔒';
+                }
+            }
+        } else {
+            // 解锁字段
+            lockedFields.delete(updatePath);
+            
+            // 启用复选框
+            const checkbox = checkboxMap.get(updatePath);
+            if (checkbox) {
+                checkbox.disabled = false;
+            }
+            
+            // 更新锁定图标
+            const row = fieldInfoIndex.get(updatePath)?.element;
+            if (row) {
+                const icon = row.querySelector('.lock-checkbox');
+                if (icon) {
+                    icon.className = 'lock-checkbox unlocked';
+                    icon.textContent = '🔓';
+                }
+            }
+        }
+    });
+    
+    // 单独更新当前操作的图标（即使上面的循环已经更新了）
+    if (newLockedState) {
+        lockCheckbox.className = 'lock-checkbox locked';
+        lockCheckbox.textContent = '🔒';
+    } else {
+        lockCheckbox.className = 'lock-checkbox unlocked';
+        lockCheckbox.textContent = '🔓';
+    }
+}
+
 // 处理复选框变化 - 确保在单个字段选择时也正确处理子字段
 function handleCheckboxChange(checkbox, data, path) {
     const isChecked = checkbox.checked;
+    
+    // 检查字段是否被锁定
+    if (lockedFields.has(path)) {
+        return;
+    }
     
     // 确保path在searchFilteredFields中才处理
     if (searchFilteredFields.has(path) || path === 'root') {
@@ -546,14 +705,14 @@ function handleCheckboxChange(checkbox, data, path) {
                 // 获取并选中所有子字段（使用现有的getAllChildPaths函数确保一致性）
                 const childPaths = getAllChildPaths(path);
                 childPaths.forEach(childPath => {
-                    // 只选择搜索筛选后的子字段
-                    if (searchFilteredFields.has(childPath)) {
+                    // 只选择搜索筛选后的且未被锁定的子字段
+                    if (searchFilteredFields.has(childPath) && !lockedFields.has(childPath)) {
                         selectedFields.add(childPath);
                     }
                 });
                 
                 // 批量更新复选框状态
-                batchUpdateCheckboxes(childPaths, true);
+                batchUpdateCheckboxes(childPaths.filter(p => !lockedFields.has(p)), true);
             }
         } else {
             // 取消选中当前字段
@@ -564,14 +723,14 @@ function handleCheckboxChange(checkbox, data, path) {
                 // 获取并取消选中所有子字段
                 const childPaths = getAllChildPaths(path);
                 childPaths.forEach(childPath => {
-                    // 只取消选择搜索筛选后的子字段
-                    if (searchFilteredFields.has(childPath)) {
+                    // 只取消选择搜索筛选后的且未被锁定的子字段
+                    if (searchFilteredFields.has(childPath) && !lockedFields.has(childPath)) {
                         selectedFields.delete(childPath);
                     }
                 });
                 
                 // 批量更新复选框状态
-                batchUpdateCheckboxes(childPaths, false);
+                batchUpdateCheckboxes(childPaths.filter(p => !lockedFields.has(p)), false);
             }
         }
         
@@ -684,57 +843,152 @@ function computeNodeValueText(value, isObject, isArray) {
     return `Object{${Object.keys(value).length}}`;
 }
 
-// 处理搜索
-function handleSearch(event) {
-    searchTerm = event.target.value.toLowerCase();
-    applySearchFilter();
+// 更新筛选按钮样式
+function updateFilterButtonStyle(button, isActive) {
+    if (isActive) {
+        button.classList.add('active');
+    } else {
+        button.classList.remove('active');
+    }
 }
 
-// 应用搜索筛选
-function applySearchFilter() {
-    requestAnimationFrame(() => {
+// 搜索处理
+function handleSearch(event) {
+    const value = event.target.value || '';
+    const term = value.trim().toLowerCase();
+    searchTerm = term;
+    applySearchFilter(term);
+}
+
+// 应用搜索筛选 - 修改以支持键值筛选和自动展开功能
+function applySearchFilter(term) {
+    // 重置所有行的可见性
+    document.querySelectorAll('.tree-row').forEach(row => {
+        row.style.display = '';
+    });
+    
+    if (!term || term.trim() === '') {
+        // 如果搜索词为空，显示所有节点
         searchFilteredFields.clear();
-        
-        if (searchTerm === '') {
-            allFieldPaths.forEach(path => {
+        allFieldPaths.forEach(path => {
+            if (path !== 'root') {
                 searchFilteredFields.add(path);
-            });
-            clearSearchState();
-            applyExpansionVisibility();
-            return;
+            }
+        });
+        return;
+    }
+    
+    // 标记匹配的节点
+    const matchedPaths = new Set();
+    nodeMetadataMap.forEach((metadata, path) => {
+        if (path === 'root') return;
+        
+        let nameMatch = false;
+        let valueMatch = false;
+        
+        // 根据筛选设置决定搜索范围
+        if (searchFilterKey) {
+            nameMatch = metadata.displayName.toLowerCase().includes(term);
+        }
+        if (searchFilterValue) {
+            valueMatch = metadata.valueText.toLowerCase().includes(term);
         }
         
-        const matchedPaths = new Set();
-        nodeMetadataMap.forEach((metadata, path) => {
-            if (path === 'root') return;
-            const nameMatch = metadata.displayName.toLowerCase().includes(searchTerm);
-            const valueMatch = metadata.valueText.toLowerCase().includes(searchTerm);
-            if (nameMatch || valueMatch) {
-                matchedPaths.add(path);
-            }
-        });
-        
-        const pathsToShow = new Set(['root']);
-        matchedPaths.forEach(path => {
-            pathsToShow.add(path);
-            searchFilteredFields.add(path);
-            
-            let currentPath = path;
-            while (parentPathMap.has(currentPath)) {
-                currentPath = parentPathMap.get(currentPath);
-                pathsToShow.add(currentPath);
-                if (currentPath !== 'root') {
-                    searchFilteredFields.add(currentPath);
-                }
-            }
-        });
-        
-        pathsToShow.forEach(path => {
-            ensurePathRendered(path);
-        });
-        
-        updateTreeDisplayForSearch(pathsToShow, matchedPaths);
+        if (nameMatch || valueMatch) {
+            matchedPaths.add(path);
+        }
     });
+    
+    // 更新搜索筛选字段集合
+    searchFilteredFields.clear();
+    
+    // 确保所有匹配字段及其父节点都被渲染和展开
+    matchedPaths.forEach(path => {
+        searchFilteredFields.add(path);
+        
+        // 自动展开到匹配字段：确保所有父节点都被渲染和展开
+        let currentPath = path;
+        let parentPath = parentPathMap.get(currentPath);
+        
+        // 从匹配字段向上遍历到根节点
+        while (parentPath) {
+            searchFilteredFields.add(parentPath);
+            
+            // 确保父节点被渲染
+            ensurePathRendered(parentPath);
+            
+            // 确保父节点被展开
+            expandedPaths.add(parentPath);
+            
+            // 继续向上遍历
+            currentPath = parentPath;
+            parentPath = parentPathMap.get(currentPath);
+        }
+    });
+    
+    // 更新树显示
+    updateTreeDisplayForSearch(searchFilteredFields, matchedPaths);
+}
+
+// 滚动到搜索匹配字段
+function scrollToSelectedField(direction) {
+    // 获取所有搜索匹配的字段（带有search-hit类的元素）
+    const matchedElements = Array.from(document.querySelectorAll('.tree-row.search-hit'));
+    if (matchedElements.length === 0) return;
+    
+    // 提取路径信息
+    const matchedPaths = matchedElements.map(element => element.getAttribute('data-path'));
+    
+    // 获取当前可见区域的滚动位置
+    const viewportTop = treeContent.scrollTop;
+    const viewportBottom = viewportTop + treeContent.clientHeight;
+    
+    // 找出当前可见的第一个匹配行的索引
+    let currentIndex = -1;
+    
+    for (let i = 0; i < matchedElements.length; i++) {
+        const element = matchedElements[i];
+        const rect = element.getBoundingClientRect();
+        const treeContentRect = treeContent.getBoundingClientRect();
+        const rowTop = rect.top - treeContentRect.top + treeContent.scrollTop;
+        const rowBottom = rowTop + rect.height;
+        
+        // 检查行是否至少部分可见
+        if ((rowTop >= viewportTop && rowTop < viewportBottom) || 
+            (rowBottom > viewportTop && rowBottom <= viewportBottom) ||
+            (rowTop <= viewportTop && rowBottom >= viewportBottom)) {
+            currentIndex = i;
+            break;
+        }
+    }
+    
+    // 计算下一个要滚动到的索引
+    let targetIndex;
+    if (direction === 'next') {
+        targetIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % matchedElements.length;
+    } else { // 'prev'
+        targetIndex = currentIndex === -1 ? matchedElements.length - 1 : 
+                     (currentIndex - 1 + matchedElements.length) % matchedElements.length;
+    }
+    
+    // 滚动到目标行
+    const targetElement = matchedElements[targetIndex];
+    if (targetElement) {
+        // 平滑滚动到目标元素
+        const treeContentRect = treeContent.getBoundingClientRect();
+        const rowRect = targetElement.getBoundingClientRect();
+        const rowTop = rowRect.top - treeContentRect.top + treeContent.scrollTop;
+        
+        // 确保滚动位置在视图中间附近，提供更好的用户体验
+        const centerOffset = treeContent.clientHeight / 3;
+        treeContent.scrollTop = Math.max(0, rowTop - centerOffset);
+        
+        // 短暂高亮当前选中的匹配项，增强视觉反馈
+        targetElement.classList.add('highlight-active');
+        setTimeout(() => {
+            targetElement.classList.remove('highlight-active');
+        }, 500);
+    }
 }
 
 // 搜索模式下更新树显示
@@ -762,9 +1016,16 @@ function updateTreeDisplayForSearch(pathsToShow, matchedPaths) {
         }
         
         if (info.childrenContainer) {
-            const children = childPathMap.get(path);
-            const hasChildVisible = children ? Array.from(children).some(childPath => pathsToShow.has(childPath)) : false;
-            if (hasChildVisible) {
+            // 检查是否应该展开（根据expandedPaths或是否有可见子节点）
+            const shouldExpand = expandedPaths.has(path) || 
+                (() => {
+                    const children = childPathMap.get(path);
+                    return children ? Array.from(children).some(childPath => pathsToShow.has(childPath)) : false;
+                })();
+                
+            if (shouldExpand) {
+                // 确保子节点被渲染
+                renderChildrenForPath(path);
                 info.childrenContainer.style.display = 'block';
                 const toggleIcon = info.element.querySelector('.toggle-icon');
                 if (toggleIcon && toggleIcon.textContent !== ' ') {
@@ -914,21 +1175,73 @@ function getVisibleFieldPaths() {
     return new Set(searchFilteredFields);
 }
 
+// 批量锁定当前选中的字段
+function handleLockSelection() {
+    // 遍历所有选中的字段并锁定它们
+    selectedFields.forEach(path => {
+        if (!lockedFields.has(path) && path !== 'root') {
+            lockedFields.add(path);
+            // 禁用复选框
+            const checkbox = checkboxMap.get(path);
+            if (checkbox) {
+                checkbox.disabled = true;
+            }
+            // 更新锁定图标
+            const row = fieldInfoIndex.get(path)?.element;
+            if (row) {
+                const lockIcon = row.querySelector('.lock-checkbox');
+                if (lockIcon) {
+                    lockIcon.className = 'lock-checkbox locked';
+                    lockIcon.textContent = '🔒';
+                }
+            }
+        }
+    });
+}
+
+// 解锁可见的字段 - 基于当前筛选后的字段集合
+function handleUnlockVisible() {
+    let unlockedCount = 0;
+    
+    // 如果有搜索筛选，则解锁筛选后的字段；否则解锁所有字段
+    const fieldsToUnlock = searchFilteredFields.size > 0 ? searchFilteredFields : allFieldPaths;
+    
+    fieldsToUnlock.forEach(path => {
+        // 跳过root路径，只处理实际字段
+        if (path !== 'root' && lockedFields.has(path)) {
+            lockedFields.delete(path);
+            unlockedCount++;
+        }
+    });
+    
+    // 更新所有复选框状态
+    updateAllCheckboxes();
+    
+    // 添加提示显示解锁了多少个字段
+    if (unlockedCount > 0) {
+        console.log(`已解锁 ${unlockedCount} 个字段`);
+    }
+}
+
 // 全选功能 - 仅应用于搜索筛选后的字段 - 优化版本
 function handleSelectAll() {
     // 创建新的Set以避免在迭代过程中修改集合
     const newSelectedFields = new Set(selectedFields);
     
-    // 添加所有搜索筛选后的字段及其子字段
+    // 添加所有搜索筛选后的字段及其子字段（跳过锁定的字段）
     searchFilteredFields.forEach(path => {
-        // 选中当前字段（仅当它是搜索筛选后的字段时）
-        newSelectedFields.add(path);
-        
-        // 自动选中所有子字段（如果有）
-        const childPaths = getAllChildPaths(path);
-        childPaths.forEach(childPath => {
-            newSelectedFields.add(childPath);
-        });
+        if (!lockedFields.has(path)) {
+            // 选中当前字段（仅当它是搜索筛选后的字段时）
+            newSelectedFields.add(path);
+            
+            // 自动选中所有子字段（如果有）
+            const childPaths = getAllChildPaths(path);
+            childPaths.forEach(childPath => {
+                if (!lockedFields.has(childPath)) {
+                    newSelectedFields.add(childPath);
+                }
+            });
+        }
     });
     
     // 一次性替换selectedFields
@@ -947,18 +1260,72 @@ function handleDeselectAll() {
     // 创建新的Set以避免在迭代过程中修改集合
     const newSelectedFields = new Set(selectedFields);
     
-    // 移除所有搜索筛选后的字段及其子字段
+    // 移除所有搜索筛选后的字段及其子字段（跳过锁定的字段）
     searchFilteredFields.forEach(path => {
-        // 取消选中当前字段（仅当它是搜索筛选后的字段时）
-        newSelectedFields.delete(path);
-        
-        // 获取所有子路径
-        const childPaths = getAllChildPaths(path);
-        
-        // 批量从选中集合中删除
-        childPaths.forEach(childPath => {
-            newSelectedFields.delete(childPath);
-        });
+        if (!lockedFields.has(path)) {
+            // 取消选中当前字段（仅当它是搜索筛选后的字段时）
+            newSelectedFields.delete(path);
+            
+            // 获取所有子路径
+            const childPaths = getAllChildPaths(path);
+            
+            // 批量从选中集合中删除
+            childPaths.forEach(childPath => {
+                if (!lockedFields.has(childPath)) {
+                    newSelectedFields.delete(childPath);
+                }
+            });
+        }
+    });
+    
+    // 一次性替换selectedFields
+    selectedFields.clear();
+    newSelectedFields.forEach(path => selectedFields.add(path));
+    
+    // 更新所有复选框状态
+    updateAllCheckboxes();
+    
+    // 更新选中数量显示
+    updateSelectedCount();
+}
+
+// 选择所有匹配字段功能
+function handleSelectMatchedFields() {
+    // 从matchedPaths中获取所有匹配的字段（通过searchFilteredFields和样式类'search-hit'判断）
+    const matchedPaths = new Set();
+    
+    // 获取所有被标记为搜索命中的元素
+    document.querySelectorAll('.tree-row.search-hit').forEach(row => {
+        const path = row.getAttribute('data-path');
+        if (path && !lockedFields.has(path)) {
+            matchedPaths.add(path);
+        }
+    });
+    
+    // 如果没有匹配字段，直接返回
+    if (matchedPaths.size === 0) {
+        return;
+    }
+    
+    // 创建新的Set以避免在迭代过程中修改集合
+    const newSelectedFields = new Set(selectedFields);
+    
+    // 添加所有匹配字段及其子字段（跳过锁定的字段）
+    matchedPaths.forEach(path => {
+        if (!lockedFields.has(path)) {
+            // 选中当前字段
+            newSelectedFields.add(path);
+            
+            // 自动选中所有子字段（如果启用了autoSelectChildren）
+            if (autoSelectChildren) {
+                const childPaths = getAllChildPaths(path);
+                childPaths.forEach(childPath => {
+                    if (!lockedFields.has(childPath)) {
+                        newSelectedFields.add(childPath);
+                    }
+                });
+            }
+        }
     });
     
     // 一次性替换selectedFields
@@ -977,22 +1344,28 @@ function handleInvertSelection() {
     // 创建新的Set以避免在迭代过程中修改集合
     const newSelectedFields = new Set(selectedFields);
     
-    // 遍历所有搜索筛选后的字段进行反选
+    // 遍历所有搜索筛选后的字段进行反选（跳过锁定的字段）
     searchFilteredFields.forEach(path => {
-        if (newSelectedFields.has(path)) {
-            // 如果已选中，则取消选中当前字段及其所有子字段
-            newSelectedFields.delete(path);
-            const childPaths = getAllChildPaths(path);
-            childPaths.forEach(childPath => {
-                newSelectedFields.delete(childPath);
-            });
-        } else {
-            // 如果未选中，则选中当前字段及其所有子字段
-            newSelectedFields.add(path);
-            const childPaths = getAllChildPaths(path);
-            childPaths.forEach(childPath => {
-                newSelectedFields.add(childPath);
-            });
+        if (!lockedFields.has(path)) {
+            if (newSelectedFields.has(path)) {
+                // 如果已选中，则取消选中当前字段及其所有子字段
+                newSelectedFields.delete(path);
+                const childPaths = getAllChildPaths(path);
+                childPaths.forEach(childPath => {
+                    if (!lockedFields.has(childPath)) {
+                        newSelectedFields.delete(childPath);
+                    }
+                });
+            } else {
+                // 如果未选中，则选中当前字段及其所有子字段
+                newSelectedFields.add(path);
+                const childPaths = getAllChildPaths(path);
+                childPaths.forEach(childPath => {
+                    if (!lockedFields.has(childPath)) {
+                        newSelectedFields.add(childPath);
+                    }
+                });
+            }
         }
     });
     
@@ -1012,6 +1385,25 @@ function updateAllCheckboxes() {
     // 使用 checkboxMap 而不是 querySelectorAll，性能更好
     checkboxMap.forEach((checkbox, path) => {
         checkbox.checked = selectedFields.has(path);
+        checkbox.disabled = lockedFields.has(path);
+        
+        // 确保行元素有data-path属性，方便解锁可见功能使用
+        const row = checkbox.closest('.tree-row');
+        if (row) {
+            row.setAttribute('data-path', path);
+            
+            // 更新锁定图标状态
+            const lockIcon = row.querySelector('.lock-checkbox');
+            if (lockIcon) {
+                if (lockedFields.has(path)) {
+                    lockIcon.className = 'lock-checkbox locked';
+                    lockIcon.textContent = '🔒';
+                } else {
+                    lockIcon.className = 'lock-checkbox unlocked';
+                    lockIcon.textContent = '🔓';
+                }
+            }
+        }
     });
 }
 

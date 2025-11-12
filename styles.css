@@ -82,8 +82,50 @@ h1 {
     margin-bottom: 20px;
 }
 
+/* 搜索容器样式调整 */
+.search-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.search-filters {
+    display: flex;
+    gap: 2px;
+}
+
+.filter-btn {
+    padding: 5px 5px;
+    background-color: #2a2a2a;
+    border: 1px solid #444;
+    color: #999;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    min-width: 35px;
+}
+
+.filter-btn:first-child {
+    border-radius: 6px 0 0 6px;
+}
+
+.filter-btn:last-child {
+    border-radius: 0 6px 6px 0;
+}
+
+.filter-btn:hover {
+    background-color: #3a3a3a;
+    color: #e0e0e0;
+}
+
+.filter-btn.active {
+    background-color: #4a6cf7;
+    color: white;
+    border-color: #4a6cf7;
+}
+
 #search-input {
-    width: 100%;
+    flex: 1;
     padding: 12px 16px;
     background-color: #2a2a2a;
     border: 1px solid #444;
@@ -91,6 +133,43 @@ h1 {
     color: #e0e0e0;
     font-size: 1rem;
     transition: border-color 0.3s ease;
+}
+
+.search-scroll-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.scroll-btn {
+    padding: 6px 12px;
+    background-color: #2a2a2a;
+    border: 1px solid #444;
+    color: #e0e0e0;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.scroll-btn:first-child {
+    border-radius: 6px 6px 0 0;
+}
+
+.scroll-btn:last-child {
+    border-radius: 0 0 6px 6px;
+}
+
+.scroll-btn:hover {
+    background-color: #3a3a3a;
+    border-color: #555;
+}
+
+.scroll-btn:active {
+    background-color: #2a2a2a;
+    transform: scale(0.95);
 }
 
 #search-input:focus {
@@ -125,7 +204,7 @@ h1 {
 .control-btn {
     background-color: #3a3a3a;
     color: #e0e0e0;
-    padding: 8px 16px;
+    padding: 12px 15px;
     border: 1px solid #444;
     border-radius: 4px;
     cursor: pointer;
@@ -179,6 +258,17 @@ h1 {
     background-color: rgba(74, 108, 247, 0.2);
 }
 
+.tree-row.highlight-active {
+    background-color: rgba(255, 165, 0, 0.3);
+    animation: pulse 0.5s ease-in-out;
+}
+
+@keyframes pulse {
+    0% { opacity: 0.6; }
+    50% { opacity: 1; }
+    100% { opacity: 0.6; }
+}
+
 .toggle-icon {
     margin-right: 8px;
     cursor: pointer;
@@ -201,6 +291,27 @@ h1 {
     display: flex;
     justify-content: space-between;
     align-items: center;
+}
+
+/* 锁定复选框样式 */
+.lock-checkbox {
+    cursor: pointer;
+    font-size: 1.2rem;
+    transition: transform 0.2s ease;
+    margin-left: 10px;
+    user-select: none;
+}
+
+.lock-checkbox:hover {
+    transform: scale(1.1);
+}
+
+.lock-checkbox.locked {
+    color: #4a6cf7;
+}
+
+.lock-checkbox.unlocked {
+    color: #999;
 }
 
 .field-name {
