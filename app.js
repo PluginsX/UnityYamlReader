@@ -223,6 +223,13 @@ function renderNode(container, data, fieldName, parentPath = '') {
     treeRow.className = 'tree-row';
     treeRow.dataset.path = currentPath;
     
+    // 如果有子节点，先创建子节点容器
+    let childrenContainer = null;
+    if (hasChildren) {
+        childrenContainer = document.createElement('div');
+        childrenContainer.className = 'children';
+    }
+    
     // 添加展开/折叠图标
     const toggleIcon = document.createElement('span');
     toggleIcon.className = 'toggle-icon';
@@ -286,10 +293,8 @@ function renderNode(container, data, fieldName, parentPath = '') {
     treeRow.appendChild(fieldInfo);
     container.appendChild(treeRow);
     
-    // 如果有子节点，创建子节点容器
+    // 添加子节点容器到DOM
     if (hasChildren) {
-        const childrenContainer = document.createElement('div');
-        childrenContainer.className = 'children';
         container.appendChild(childrenContainer);
         
         // 递归渲染子节点
@@ -362,7 +367,7 @@ function batchUpdateCheckboxes(paths, checked) {
     }
 }
 
-// 处理复选框变化
+// 处理复选框变化 - 确保在单个字段选择时也正确处理子字段
 function handleCheckboxChange(checkbox, data, path) {
     const isChecked = checkbox.checked;
     
@@ -370,10 +375,8 @@ function handleCheckboxChange(checkbox, data, path) {
         // 选中当前字段
         selectedFields.add(path);
         
-        // 自动选中所有子字段
+        // 获取并选中所有子字段（使用现有的getAllChildPaths函数确保一致性）
         const childPaths = getAllChildPaths(path);
-        
-        // 批量添加到选中集合
         childPaths.forEach(childPath => {
             selectedFields.add(childPath);
         });
@@ -384,17 +387,18 @@ function handleCheckboxChange(checkbox, data, path) {
         // 取消选中当前字段
         selectedFields.delete(path);
         
-        // 获取所有子路径
-        const pathsToDelete = Array.from(selectedFields).filter(p => p.startsWith(`${path}.`));
-        
-        // 批量从选中集合中删除
-        pathsToDelete.forEach(p => {
-            selectedFields.delete(p);
+        // 获取并取消选中所有子字段
+        const childPaths = getAllChildPaths(path);
+        childPaths.forEach(childPath => {
+            selectedFields.delete(childPath);
         });
         
         // 批量更新复选框状态
-        batchUpdateCheckboxes(pathsToDelete, false);
+        batchUpdateCheckboxes(childPaths, false);
     }
+    
+    // 更新所有父节点的复选框状态
+    updateParentCheckboxes(path);
     
     // 更新选中数量显示
     updateSelectedCount();
@@ -572,11 +576,36 @@ function setValueByPath(obj, path, value) {
     current[lastPart] = value;
 }
 
-// 全选功能
+// 获取当前可见的字段路径（搜索筛选后的字段）
+function getVisibleFieldPaths() {
+    const visiblePaths = new Set();
+    const visibleRows = document.querySelectorAll('.tree-row:not([style="display: none"])');
+    
+    visibleRows.forEach(row => {
+        const path = row.dataset.path;
+        if (path && path !== 'root') {
+            visiblePaths.add(path);
+        }
+    });
+    
+    return visiblePaths;
+}
+
+// 全选功能 - 仅应用于搜索筛选后的字段
 function handleSelectAll() {
-    // 将所有字段路径添加到选中集合
-    allFieldPaths.forEach(path => {
+    // 获取当前可见的字段路径
+    const visiblePaths = getVisibleFieldPaths();
+    
+    // 将可见字段路径添加到选中集合
+    visiblePaths.forEach(path => {
+        // 选中当前字段
         selectedFields.add(path);
+        
+        // 自动选中所有子字段（如果有）
+        const childPaths = getAllChildPaths(path);
+        childPaths.forEach(childPath => {
+            selectedFields.add(childPath);
+        });
     });
     
     // 更新所有复选框状态
@@ -586,10 +615,24 @@ function handleSelectAll() {
     updateSelectedCount();
 }
 
-// 取消所有选择功能
+// 取消所有选择功能 - 仅应用于搜索筛选后的字段
 function handleDeselectAll() {
-    // 清空选中集合
-    selectedFields.clear();
+    // 获取当前可见的字段路径
+    const visiblePaths = getVisibleFieldPaths();
+    
+    // 遍历可见字段路径，取消选中当前字段及其所有子字段
+    visiblePaths.forEach(path => {
+        // 取消选中当前字段
+        selectedFields.delete(path);
+        
+        // 获取所有子路径
+        const childPaths = getAllChildPaths(path);
+        
+        // 批量从选中集合中删除
+        childPaths.forEach(childPath => {
+            selectedFields.delete(childPath);
+        });
+    });
     
     // 更新所有复选框状态
     updateAllCheckboxes();
@@ -598,14 +641,27 @@ function handleDeselectAll() {
     updateSelectedCount();
 }
 
-// 反选功能
+// 反选功能 - 仅应用于搜索筛选后的字段
 function handleInvertSelection() {
-    // 遍历所有字段路径，切换选中状态
-    allFieldPaths.forEach(path => {
+    // 获取当前可见的字段路径
+    const visiblePaths = getVisibleFieldPaths();
+    
+    // 遍历可见字段路径，切换选中状态
+    visiblePaths.forEach(path => {
         if (selectedFields.has(path)) {
+            // 如果已选中，则取消选中当前字段及其所有子字段
             selectedFields.delete(path);
+            const childPaths = getAllChildPaths(path);
+            childPaths.forEach(childPath => {
+                selectedFields.delete(childPath);
+            });
         } else {
+            // 如果未选中，则选中当前字段及其所有子字段
             selectedFields.add(path);
+            const childPaths = getAllChildPaths(path);
+            childPaths.forEach(childPath => {
+                selectedFields.add(childPath);
+            });
         }
     });
     
