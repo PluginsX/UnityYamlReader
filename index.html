@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PrefabReader</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>PrefabReader</h1>
+        </header>
+        
+        <div class="toolbar">
+            <label for="file-upload" class="upload-btn">导入Prefab文件</label>
+            <input type="file" id="file-upload" accept=".prefab" style="display: none;">
+            <span id="file-name" class="file-info">未选择文件</span>
+        </div>
+        
+        <!-- 拖拽导入区域 -->
+        <div id="drop-area" class="drop-area">
+            <p>或将.prefab文件拖拽到此处</p>
+        </div>
+        
+        <div class="search-container">
+            <input type="text" id="search-input" placeholder="搜索字段...">
+        </div>
+        
+        <div class="tree-container">
+            <div id="tree-content" class="tree-content">
+                <p class="placeholder-text">请导入.prefab文件以开始解析</p>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <button id="export-btn" class="export-btn" disabled>导出为JSON</button>
+            <div class="stats">
+                <span id="selected-count">已选择: 0 个字段</span>
+            </div>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>
